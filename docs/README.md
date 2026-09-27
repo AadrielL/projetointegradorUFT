@@ -9,6 +9,7 @@ Este é o índice técnico em docs. O README da aplicação continua reservado �
 4. Acompanhe [sequências](uml/sequencias.md): em que ordem os participantes conversam.
 5. Use o [espelho do código](src/README.md) para localizar cada arquivo.
 6. Consulte [rastreabilidade](requisitos.md) e [decisões do Product Owner](produto.md).
+7. Leia [integração segura com a prefeitura](integracao_prefeitura.md): arquitetura assíncrona, segurança e LGPD.
 
 **Estado atual:** entidades e validação básica de Tributo existem. Services e Repositories são contratos abstratos, sem implementação. Telas, controllers, banco, dashboard e logs ainda não existem.
 
