@@ -10,6 +10,7 @@ Cada arquivo .md explica o .py de mesmo nome. Não copiamos o código aqui: regi
 | src/models/simulacao.py | [simulacao](models/simulacao.md) |
 | src/models/historico.py | [historico](models/historico.md) |
 | src/services/autenticacao_service.py | [autenticacao_service](services/autenticacao_service.md) |
+| src/services/busca_service.py (Sprint 2) | [busca_service](services/busca_service.md) |
 | src/services/tributo_service.py | [tributo_service](services/tributo_service.md) |
 | src/services/calculo_service.py | [calculo_service](services/calculo_service.md) |
 | src/services/simulacao_service.py | [simulacao_service](services/simulacao_service.md) |
@@ -17,5 +18,6 @@ Cada arquivo .md explica o .py de mesmo nome. Não copiamos o código aqui: regi
 | src/repositories/usuario_repository.py | [usuario_repository](repositories/usuario_repository.md) |
 | src/repositories/tributo_repository.py | [tributo_repository](repositories/tributo_repository.md) |
 | src/utils/validacoes.py | [validacoes](utils/validacoes.md) |
+| seeds/mock_data.py (Sprint 2) | [seeds e massa de dados](seeds.md) |
 
-Arquivos __init__.py identificam os pacotes Python e só têm uma descrição nesta etapa; veja [pacotes](pacotes.md). Cache, .gitkeep e arquivos gerados não representam funcionalidades e não recebem espelhos.
+Arquivos __init__.py identificam os pacotes Python e só têm uma descrição nesta etapa; veja [pacotes](pacotes.md). Estruturas de dados avançadas da Sprint 2 (`tabela_hash.py`, `fila_cobranca.py`, `grafo.py`) estão descritas na [Arquitetura Geral](../arquitetura.md).

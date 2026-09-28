@@ -72,13 +72,53 @@ armazenar `(-score, cpf)`.
 **Testes:** 3 testes em `tests/test_fila_cobranca.py`, cobrindo fila vazia,
 ordem de prioridade e empate de score — todos passando.
 
-### Grafo (a preencher)
-**Uso:** _(descrever o que o grafo representa no sistema)_
+### Grafo de Relacionamentos Fiscais (src/grafo.py)
+**Responsável:** João Pedro
 
-**Estrutura escolhida:** _(lista de adjacência / matriz de adjacência)_
+**Uso:** Representação das conexões e vínculos cadastrais entre Contribuinte (CPF/CNPJ), Imóveis vinculados e Processos de Execução Fiscal. Permite identificar rapidamente a malha patrimonial e jurídica de um devedor.
+
+**Classe:** `GrafoContribuintes`
+- `adicionar_relacao(cpf_cnpj, imovel, processo)`: estabelece uma aresta direcionada entre o contribuinte e o conjunto imóvel-processo.
+- `buscar_relacionados(cpf_cnpj)`: retorna a lista de todos os nós (imóveis e processos) associados ao contribuinte.
+
+**Estrutura escolhida:** Lista de adjacência implementada com dicionário de listas (`dict[str, list[dict]]`).
 
 **Complexidade:**
-- Inserção de nó/aresta: _(a definir)_
-- Busca/percurso: _(a definir)_
+- Inserção de aresta: $O(1)$ amortizado
+- Busca de adjacências diretas por nó: $O(1)$ médio
+- Espaço: $O(V + E)$, onde $V$ são os contribuintes e $E$ as ligações imobiliárias/processuais.
 
-**Testes:** _(a definir)_
+**Testes:** Verificação de inserção e recuperação de relacionamentos via CLI em `src/grafo.py`.
+
+---
+
+## Sprint 2 — Seeds, Serviço de Busca e Validação Fiscal
+**Responsável:** Adriel Morais
+
+### 1. Povoamento e Mocks (`seeds/mock_data.py`)
+Massa de dados realista de Palmas/TO com DTOs tipados (`ContribuinteMock`, `ImovelMock`, `DividaMock`, `ProcessoMock`) e motor plug-and-play:
+- **`BancoSimuladoEmMemoria`**: emula índices de busca relacional em memória com complexidade $O(1)$ para testes unitários antes da entrega do banco real.
+- **`executar_seed(model_registry, db_session)`**: aceita injeção direta das classes ORM/SQLAlchemy da Rayssa, populando o banco de forma automática no ambiente final.
+
+### 2. Camada de Serviço de Busca (`src/services/busca_service.py`)
+Implementa as regras de negócio para busca cadastral unificada e dossiê imobiliário:
+- **`BuscaService`**: validação estrutural de CPF (11 dígitos) e CNPJ (14 dígitos), tratamento de erros (`DocumentoInvalidoError`, `ContribuinteNaoEncontradoError`, `ImovelNaoEncontradoError`) e consolidação de débitos e execuções fiscais por imóvel.
+
+### 3. Integração com a Prefeitura (`docs/integracao_prefeitura.md`)
+Especificação formal da comunicação assíncrona, segurança com HTTPS/TLS 1.3, autenticação JWT/API Key, rate-limiting e conformidade com a LGPD (anonimização e mascaramento de dados sensíveis).
+
+---
+
+## 🚀 Futuros Upgrades (Próximas Sprints / Roadmap)
+
+1. **Camada de Persistência Real (Sprint 3 — Rayssa):**
+   - Substituição do `BancoSimuladoEmMemoria` por modelos relacionais ORM (SQLAlchemy / PostgreSQL ou SQLite).
+   - Acoplamento transparente com o `seeds.mock_data.executar_seed(model_registry, db_session)`.
+2. **Controllers e Interface com Usuário (Sprint 3 — Gabriel e Equipe):**
+   - Criação da camada Controller no padrão MVC para intermediar chamadas entre entrada de dados e serviços (`BuscaService`, `CalculoService`).
+   - Interface interativa (CLI com menus dinâmicos ou endpoints RESTful com FastAPI).
+3. **Consumo Assíncrono ao Vivo das APIs da Prefeitura:**
+   - Implementação de cliente `aiohttp` com *circuit breaker* e retentativa exponencial (*exponential backoff*) seguindo as diretrizes de `docs/integracao_prefeitura.md`.
+4. **Dashboard de Indicadores e Projeções (RF10):**
+   - Agregação de métricas de arrecadação por zona fiscal e geração de gráficos de inadimplência.
+
