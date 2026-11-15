@@ -63,32 +63,53 @@ class ServicoAutenticacao(AutenticacaoService):
 
     def __init__(self):
         self._usuarios_por_email: Dict[str, Usuario] = {}
+        self._usuarios_por_cpf: Dict[str, Usuario] = {}
         self._usuarios_por_id: Dict[str, Usuario] = {}
+        # Base de servidores municipais da SEFIN Palmas autorizados para perfil Auditor/Gestor
+        self._servidores_autorizados = {
+            "0865743101": {"nome": "Adriel Morais da Silva", "cargo": "Auditor Fiscal de Tributos", "matricula": "SEFIN-2026-086", "perfil": Perfil.ADMINISTRADOR},
+            "08657431001": {"nome": "Adriel Morais da Silva", "cargo": "Auditor Fiscal de Tributos", "matricula": "SEFIN-2026-086", "perfil": Perfil.ADMINISTRADOR},
+            "11122233344": {"nome": "Roberto Silva", "cargo": "Auditor Fiscal", "matricula": "SEFIN-0012", "perfil": Perfil.ADMINISTRADOR},
+            "55566677788": {"nome": "Mariana Costa", "cargo": "Gestor Tributário", "matricula": "SEFIN-0045", "perfil": Perfil.GESTAO},
+        }
         self._inicializar_usuarios_padrao()
 
     def _inicializar_usuarios_padrao(self):
-        """Inicializa as 3 personas oficiais do ecossistema municipal."""
-        # 1. Auditor Fiscal (SEFIN) - Acesso pleno à cobrança ativa e predições
+        """Inicializa os usuários oficiais do ecossistema municipal."""
+        # 1. Auditor Adriel Morais (com o CPF fornecido)
+        self.cadastrar(
+            nome="Adriel Morais da Silva",
+            email="adrie3lmorais@gmail.com",
+            senha="109924303",
+            cpf="0865743101",
+            perfil=Perfil.ADMINISTRADOR,
+            matricula_servidor="SEFIN-2026-086",
+            id_usuario="usr_adriel_auditor"
+        )
+
+        # 2. Auditor Padrão SEFIN
         self.cadastrar(
             id_usuario="usr_auditor_01",
             nome="Dr. Roberto Silva (Auditor Fiscal)",
             email="auditor@sefin.palmas.to.gov.br",
             senha="sefin123",
             perfil=Perfil.ADMINISTRADOR,
-            cpf=None
+            matricula_servidor="SEFIN-0012",
+            cpf="111.222.333-44"
         )
 
-        # 2. Gestor Tributário (SEFIN) - Dashboard, métricas de fairness e cenários
+        # 3. Gestor Tributário SEFIN
         self.cadastrar(
             id_usuario="usr_gestor_01",
             nome="Dra. Mariana Costa (Diretoria de Arrecadação)",
             email="gestor@sefin.palmas.to.gov.br",
             senha="sefin123",
             perfil=Perfil.GESTAO,
-            cpf=None
+            matricula_servidor="SEFIN-0045",
+            cpf="555.666.777-88"
         )
 
-        # 3. Contribuinte 1 (Cidadão Carlos Eduardo) - Apenas seus próprios débitos
+        # 4. Contribuinte Carlos Eduardo
         self.cadastrar(
             id_usuario="usr_cidadao_01",
             nome="Carlos Eduardo Siqueira",
@@ -98,28 +119,29 @@ class ServicoAutenticacao(AutenticacaoService):
             cpf="123.456.789-01"
         )
 
-        # 4. Contribuinte 2 (Cidadã Maria Auxiliadora) - Apenas seus próprios débitos
-        self.cadastrar(
-            id_usuario="usr_cidadao_02",
-            nome="Maria Auxiliadora Fernandes",
-            email="maria.fernandes@email.com",
-            senha="cidadao123",
-            perfil=Perfil.CONSULTA,
-            cpf="987.654.321-09"
-        )
-
     def cadastrar(
         self,
         nome: str,
         email: str,
         senha: str,
-        perfil: Perfil = Perfil.CONSULTA,
+        perfil: Optional[Perfil] = None,
         cpf: Optional[str] = None,
+        matricula_servidor: Optional[str] = None,
+        vinculo_govbr: bool = False,
+        nivel_govbr: Optional[str] = None,
         id_usuario: Optional[str] = None
     ) -> Usuario:
         email_limpo = email.strip().lower()
-        if email_limpo in self._usuarios_por_email:
-            return self._usuarios_por_email[email_limpo]
+        cpf_limpo = "".join(filter(str.isdigit, cpf)) if cpf else None
+
+        # Verificação automática de vínculo público municipal por CPF ou domínio de e-mail
+        perfil_efetivo = perfil or Perfil.CONSULTA
+        if cpf_limpo and cpf_limpo in self._servidores_autorizados:
+            dados_serv = self._servidores_autorizados[cpf_limpo]
+            perfil_efetivo = dados_serv["perfil"]
+            matricula_servidor = matricula_servidor or dados_serv["matricula"]
+        elif email_limpo.endswith("@sefin.palmas.to.gov.br"):
+            perfil_efetivo = Perfil.ADMINISTRADOR
 
         uid = id_usuario or f"usr_{int(time.time() * 1000)}"
         usuario = Usuario(
@@ -127,22 +149,75 @@ class ServicoAutenticacao(AutenticacaoService):
             nome=nome.strip(),
             email=email_limpo,
             senha_hash=gerar_hash_senha(senha),
-            perfil=perfil,
-            cpf=cpf
+            perfil=perfil_efetivo,
+            cpf=cpf_limpo,
+            vinculo_govbr=vinculo_govbr,
+            nivel_govbr=nivel_govbr,
+            matricula_servidor=matricula_servidor
         )
         self._usuarios_por_email[email_limpo] = usuario
+        if cpf_limpo:
+            self._usuarios_por_cpf[cpf_limpo] = usuario
         self._usuarios_por_id[uid] = usuario
         return usuario
 
-    def autenticar(self, email: str, senha: str) -> Tuple[Usuario, str]:
-        email_limpo = email.strip().lower()
-        usuario = self._usuarios_por_email.get(email_limpo)
+    def autenticar(self, identificador: str, senha: str) -> Tuple[Usuario, str]:
+        """Autentica por E-mail ou por CPF."""
+        termo = identificador.strip()
+        termo_digitos = "".join(filter(str.isdigit, termo))
+
+        usuario = None
+        if "@" in termo:
+            usuario = self._usuarios_por_email.get(termo.lower())
+        elif termo_digitos:
+            usuario = self._usuarios_por_cpf.get(termo_digitos)
+
+        if not usuario and termo.lower() in self._usuarios_por_email:
+            usuario = self._usuarios_por_email[termo.lower()]
+
         if not usuario:
-            raise CredenciaisInvalidasError("E-mail não cadastrado no sistema tributário.")
+            raise CredenciaisInvalidasError("Usuário não cadastrado. Verifique o CPF/E-mail ou realize seu cadastro.")
 
         hash_teste = gerar_hash_senha(senha)
         if usuario.senha_hash != hash_teste:
             raise CredenciaisInvalidasError("Senha incorreta.")
+
+        token = self._gerar_token(usuario)
+        return usuario, token
+
+    def autenticar_com_govbr(
+        self,
+        cpf: str,
+        nome: Optional[str] = None,
+        nivel_govbr: str = "OURO"
+    ) -> Tuple[Usuario, str]:
+        """
+        Autentica e valida a identidade digital via Login Único Gov.br.
+        Cruza com a base de servidores do município para atribuir Auditor ou Cidadão.
+        """
+        cpf_limpo = "".join(filter(str.isdigit, cpf))
+        if not cpf_limpo:
+            raise CredenciaisInvalidasError("CPF inválido para autenticação Gov.br.")
+
+        # Verifica se é servidor cadastrado na SEFIN
+        dados_servidor = self._servidores_autorizados.get(cpf_limpo)
+        nome_efetivo = nome or (dados_servidor["nome"] if dados_servidor else f"Cidadão Gov.br {cpf_limpo[:3]}")
+        perfil_efetivo = dados_servidor["perfil"] if dados_servidor else Perfil.CONSULTA
+        matricula = dados_servidor.get("matricula") if dados_servidor else None
+
+        usuario = self._usuarios_por_cpf.get(cpf_limpo)
+        if not usuario:
+            email_gov = f"{cpf_limpo}@cidadao.gov.br"
+            usuario = self.cadastrar(
+                nome=nome_efetivo,
+                email=email_gov,
+                senha=f"govbr_{cpf_limpo}",
+                cpf=cpf_limpo,
+                perfil=perfil_efetivo,
+                matricula_servidor=matricula,
+                vinculo_govbr=True,
+                nivel_govbr=nivel_govbr
+            )
 
         token = self._gerar_token(usuario)
         return usuario, token

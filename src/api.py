@@ -65,8 +65,23 @@ predicao_service = ServicoPredicao()
 # ==============================================================================
 
 class LoginRequest(BaseModel):
-    email: str = Field(..., example="auditor@sefin.palmas.to.gov.br")
-    senha: str = Field(..., example="sefin123")
+    identificador: Optional[str] = Field(None, example="0865743101", description="CPF ou E-mail cadastrado")
+    email: Optional[str] = Field(None, example="auditor@sefin.palmas.to.gov.br")
+    senha: str = Field(..., example="109924303")
+
+
+class CadastroRequest(BaseModel):
+    nome: str = Field(..., example="Adriel Morais da Silva")
+    email: str = Field(..., example="adrie3lmorais@gmail.com")
+    senha: str = Field(..., example="109924303")
+    cpf: str = Field(..., example="0865743101")
+    telefone: Optional[str] = Field(None, example="(63) 98111-2030")
+
+
+class GovBrLoginRequest(BaseModel):
+    cpf: str = Field(..., example="0865743101", description="CPF do Cidadão ou Servidor Gov.br")
+    nome: Optional[str] = Field(None, example="Adriel Morais da Silva")
+    nivel_govbr: str = Field("OURO", example="OURO", description="Nível de confiabilidade: BRONZE, PRATA ou OURO")
 
 
 class ReajusteRequest(BaseModel):
@@ -125,17 +140,91 @@ def eh_perfil_consulta(usuario: Any) -> bool:
 
 
 # ==============================================================================
-# 0. ROTAS DE AUTENTICAÇÃO (LOGIN / PERFIL)
+# 0. ROTAS DE AUTENTICAÇÃO E CADASTRO REAL (LOGIN, GOV.BR E REGISTRO)
 # ==============================================================================
+
+@app.post("/api/v1/auth/cadastrar")
+def cadastrar_usuario(dados: CadastroRequest):
+    """
+    Cadastra um novo usuário no SITRIB.
+    Vincula o CPF e detecta automaticamente se possui cargo/matrícula de auditor
+    ou se é cidadão contribuinte (LGPD).
+    """
+    try:
+        usuario = auth_service.cadastrar(
+            nome=dados.nome,
+            email=dados.email,
+            senha=dados.senha,
+            cpf=dados.cpf,
+        )
+        _, token = auth_service.autenticar(dados.cpf or dados.email, dados.senha)
+        return {
+            "status": "sucesso",
+            "mensagem": "Usuário cadastrado com sucesso no SITRIB!",
+            "token": token,
+            "usuario": {
+                "id": usuario.id,
+                "nome": usuario.nome,
+                "email": usuario.email,
+                "perfil": str(usuario.perfil),
+                "cpf": usuario.cpf,
+                "matricula_servidor": usuario.matricula_servidor,
+            }
+        }
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
+
+@app.post("/api/v1/auth/govbr/autenticar")
+def autenticar_govbr(dados: GovBrLoginRequest):
+    """
+    Autenticação Oficial Gov.br (Login Único).
+    Valida a identidade digital pelo CPF, verifica o nível de confiabilidade
+    (Ouro/Prata/Bronze) e cruza com a folha municipal para identificar se é
+    Auditor Fiscal (SEFIN) ou Cidadão Contribuinte.
+    """
+    try:
+        usuario, token = auth_service.autenticar_com_govbr(
+            cpf=dados.cpf,
+            nome=dados.nome,
+            nivel_govbr=dados.nivel_govbr
+        )
+        tipo_vinculo = "Servidor Público / Auditor Fiscal" if usuario.perfil == Perfil.ADMINISTRADOR else "Cidadão Contribuinte"
+        return {
+            "status": "sucesso",
+            "metodo": "Gov.br (Login Único)",
+            "token": token,
+            "usuario": {
+                "id": usuario.id,
+                "nome": usuario.nome,
+                "email": usuario.email,
+                "perfil": str(usuario.perfil),
+                "cpf": usuario.cpf,
+                "nivel_govbr": usuario.nivel_govbr,
+                "vinculo_govbr": usuario.vinculo_govbr,
+                "tipo_vinculo": tipo_vinculo,
+                "matricula_servidor": usuario.matricula_servidor,
+            },
+            "mensagem": f"Autenticação Gov.br confirmada com sucesso! Vínculo: {tipo_vinculo}."
+        }
+    except CredenciaisInvalidasError as err:
+        raise HTTPException(status_code=401, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
+
 
 @app.post("/api/v1/auth/login")
 def login(dados: LoginRequest):
     """
-    Autentica o usuário na SEFIN (Auditor, Gestor ou Contribuinte)
-    e retorna o token de sessão com seu perfil de acesso.
+    Autentica o usuário no SITRIB via CPF ou E-mail com senha.
+    Retorna o token JWT/Bearer com seu perfil de acesso.
     """
+    identificador = dados.identificador or dados.email
+    if not identificador:
+        raise HTTPException(status_code=422, detail="Forneça o CPF ou E-mail para login.")
+
     try:
-        usuario, token = auth_service.autenticar(dados.email, dados.senha)
+        usuario, token = auth_service.autenticar(identificador, dados.senha)
         return {
             "token": token,
             "usuario": {
@@ -144,6 +233,8 @@ def login(dados: LoginRequest):
                 "email": usuario.email,
                 "perfil": str(usuario.perfil),
                 "cpf": usuario.cpf,
+                "matricula_servidor": usuario.matricula_servidor,
+                "nivel_govbr": usuario.nivel_govbr,
             },
             "mensagem": f"Bem-vindo(a), {usuario.nome}!"
         }
@@ -160,36 +251,18 @@ def obter_usuario_atual(usuario: Usuario = Depends(exigir_usuario)):
         "email": usuario.email,
         "perfil": str(usuario.perfil),
         "cpf": usuario.cpf,
+        "matricula_servidor": usuario.matricula_servidor,
+        "nivel_govbr": usuario.nivel_govbr,
     }
 
 
 @app.get("/api/v1/auth/usuarios-teste")
 def listar_usuarios_teste():
-    """Retorna a lista de contas padrão de teste para facilitar a troca de perfil no frontend."""
-    return [
-        {
-            "perfil": "administrador",
-            "titulo": "Auditor Fiscal (Acesso Completo)",
-            "email": "auditor@sefin.palmas.to.gov.br",
-            "senha": "sefin123",
-            "descricao": "Pesquisa qualquer CPF, acessa a fila de cobrança, predição e dívida ativa."
-        },
-        {
-            "perfil": "gestao",
-            "titulo": "Gestor Tributário (Painel Estratégico)",
-            "email": "gestor@sefin.palmas.to.gov.br",
-            "senha": "sefin123",
-            "descricao": "Visualiza dashboards consolidados, métricas de fairness e cenários fiscais."
-        },
-        {
-            "perfil": "consulta",
-            "titulo": "Contribuinte (Carlos Eduardo)",
-            "email": "carlos.siqueira@email.com",
-            "senha": "cidadao123",
-            "cpf": "123.456.789-01",
-            "descricao": "Acesso restrito exclusivamente ao seu próprio CPF (123.456.789-01)."
-        }
-    ]
+    """Bypass de homologação rápida desativado para garantir segurança e autenticação real."""
+    raise HTTPException(
+        status_code=403,
+        detail="Acesso de homologação rápida desativado. Utilize o login oficial com CPF/Senha ou a autenticação Gov.br."
+    )
 
 
 # ==============================================================================

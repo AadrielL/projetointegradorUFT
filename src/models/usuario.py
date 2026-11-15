@@ -18,3 +18,6 @@ class Usuario:
     senha_hash: str = field(repr=False)
     perfil: Perfil = Perfil.CONSULTA
     cpf: Optional[str] = None        # Vinculado para perfil CONSULTA (LGPD)
+    vinculo_govbr: bool = False      # Autenticado via Gov.br
+    nivel_govbr: Optional[str] = None  # BRONZE, PRATA, OURO
+    matricula_servidor: Optional[str] = None  # Matrícula se for servidor municipal
