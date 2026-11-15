@@ -199,7 +199,105 @@ def enriquecer_e_transformar(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
 
 def carregar_no_banco(df: pd.DataFrame):
-    logger.info("Iniciando carga normalizada no banco de dados sitrib.db...")
+    logger.info("Iniciando carga normalizada no banco relacional (PostgreSQL / SQLite fallback)...")
+    database_url = os.getenv("DATABASE_URL")
+    if database_url and database_url.startswith("postgresql"):
+        try:
+            from sqlalchemy import create_engine, text
+            from src.repositories.postgres_repository import SCHEMA_POSTGRES
+            eng = create_engine(database_url, pool_pre_ping=True, connect_args={"connect_timeout": 2})
+            with eng.begin() as conn_pg:
+                for stmt in [s.strip() for s in SCHEMA_POSTGRES.split(";") if s.strip()]:
+                    conn_pg.execute(text(stmt))
+                for _, row in df.iterrows():
+                    cpf = str(row["cpf_cnpj"])
+                    nome_inf = row.get("nome") or "Contribuinte Não Identificado"
+                    res_c = conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO contribuinte (cpf_cnpj, nome, tipo_pessoa, email, telefone, endereco_correspondencia)
+                            VALUES (:cpf, :nome, :tipo, :email, :tel, :end)
+                            ON CONFLICT (cpf_cnpj) DO UPDATE SET nome = EXCLUDED.nome
+                            RETURNING id_contribuinte
+                            """
+                        ),
+                        {
+                            "cpf": cpf,
+                            "nome": nome_inf,
+                            "tipo": row.get("tipo_pessoa", "FISICA"),
+                            "email": row.get("email"),
+                            "tel": row.get("telefone"),
+                            "end": row.get("endereco_correspondencia"),
+                        },
+                    ).fetchone()
+                    id_contribuinte = res_c[0]
+
+                    res_i = conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO imovel (inscricao_imobiliaria, id_contribuinte, endereco, bairro, cep, tipo_imovel, valor_venal, area_terreno)
+                            VALUES (:cci, :id_c, :end, :bairro, :cep, :tipo, :venal, :area)
+                            ON CONFLICT (inscricao_imobiliaria) DO UPDATE SET id_contribuinte = EXCLUDED.id_contribuinte
+                            RETURNING id_imovel
+                            """
+                        ),
+                        {
+                            "cci": row["inscricao_imobiliaria"],
+                            "id_c": id_contribuinte,
+                            "end": row.get("endereco", "Palmas"),
+                            "bairro": row.get("bairro", ""),
+                            "cep": row.get("cep", ""),
+                            "tipo": row.get("tipo_imovel", "RESIDENCIAL"),
+                            "venal": float(row.get("valor_venal", 0.0) or 0.0),
+                            "area": float(row.get("area_terreno", 0.0) or 0.0),
+                        },
+                    ).fetchone()
+                    id_imovel = res_i[0]
+
+                    res_d = conn_pg.execute(
+                        text(
+                            """
+                            INSERT INTO divida (id_imovel, exercicio_ano, valor_original, valor_atualizado, tipo_tributo, status_divida, data_vencimento)
+                            VALUES (:id_i, :ano, :v_orig, :v_atu, :trib, :status, :venc)
+                            RETURNING id_divida
+                            """
+                        ),
+                        {
+                            "id_i": id_imovel,
+                            "ano": int(row.get("exercicio_ano", 2024)),
+                            "v_orig": float(row.get("valor_original", 0.0)),
+                            "v_atu": float(row.get("valor_atualizado", 0.0)),
+                            "trib": row.get("tipo_tributo", "IPTU"),
+                            "status": row.get("status_divida", "EM_ABERTO"),
+                            "venc": row["data_vencimento"],
+                        },
+                    ).fetchone()
+                    id_divida = res_d[0]
+
+                    num_proc = row.get("numero_processo")
+                    if pd.notna(num_proc) and str(num_proc).strip():
+                        conn_pg.execute(
+                            text(
+                                """
+                                INSERT INTO processo (numero_processo, id_divida, vara_judicial, status_processo, data_ajuizamento, observacoes)
+                                VALUES (:num, :id_d, :vara, :status, :data, :obs)
+                                ON CONFLICT (numero_processo) DO NOTHING
+                                """
+                            ),
+                            {
+                                "num": str(num_proc),
+                                "id_d": id_divida,
+                                "vara": row.get("vara_judicial", ""),
+                                "status": row.get("status_processo", "EM_ANDAMENTO"),
+                                "data": row.get("data_ajuizamento", row["data_vencimento"]),
+                                "obs": row.get("observacoes", ""),
+                            },
+                        )
+            logger.info(f"Carga no PostgreSQL concluída com sucesso ({len(df)} registros).")
+            return
+        except Exception as e_pg:
+            logger.warning(f"PostgreSQL indisponível ({e_pg}). Executando carga local no fallback SQLite...")
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     inicializar_banco(conn)

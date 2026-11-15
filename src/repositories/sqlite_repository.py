@@ -225,3 +225,107 @@ class RepositorioSQLite:
                 )
                 for row in linhas
             ]
+
+    def listar_debitos_completos(self) -> List[Dict[str, Any]]:
+        """Retorna visão consolidada (LEFT JOIN) de todas as dívidas com imóvel, contribuinte e processo para auditoria."""
+        with self._conectar() as conexao:
+            linhas = conexao.execute(
+                """SELECT
+                       d.id_divida,
+                       d.exercicio_ano,
+                       d.valor_original,
+                       d.valor_atualizado,
+                       d.tipo_tributo,
+                       d.status_divida,
+                       d.data_vencimento,
+                       i.inscricao_imobiliaria,
+                       i.endereco AS endereco_imovel,
+                       i.bairro,
+                       i.cep,
+                       i.tipo_imovel,
+                       i.valor_venal,
+                       c.cpf_cnpj AS cpf_cnpj_contribuinte,
+                       c.nome AS nome_contribuinte,
+                       c.tipo_pessoa,
+                       c.email AS email_contribuinte,
+                       c.telefone AS telefone_contribuinte,
+                       p.numero_processo,
+                       p.vara_judicial,
+                       p.status_processo,
+                       p.data_ajuizamento
+                   FROM divida d
+                   JOIN imovel i ON i.id_imovel = d.id_imovel
+                   JOIN contribuinte c ON c.id_contribuinte = i.id_contribuinte
+                   LEFT JOIN processo p ON p.id_divida = d.id_divida"""
+            ).fetchall()
+            resultado: List[Dict[str, Any]] = []
+            for r in linhas:
+                data_venc = str(r["data_vencimento"] or f"{r['exercicio_ano']}-12-31")
+                partes_data = data_venc.split("-")
+                mes_venc = int(partes_data[1]) if len(partes_data) >= 2 and partes_data[1].isdigit() else 12
+                val_orig = float(r["valor_original"] or 0.0)
+                val_atual = float(r["valor_atualizado"] or val_orig)
+                tributo = (r["tipo_tributo"] or "IPTU").upper()
+                origem_api = "portal_novo" if int(r["exercicio_ano"]) >= 2024 or tributo == "ISS" else "api_antiga"
+                resultado.append({
+                    "id_divida": r["id_divida"],
+                    "codigo_debito": f"DIVIDA-{r['id_divida']}",
+                    "origem_api": origem_api,
+                    "exercicio_ano": int(r["exercicio_ano"]),
+                    "data_vencimento": data_venc,
+                    "mes_vencimento": mes_venc,
+                    "valor_original": round(val_orig, 2),
+                    "juros_multa": round(val_atual - val_orig, 2),
+                    "valor_atualizado": round(val_atual, 2),
+                    "tipo_tributo": r["tipo_tributo"],
+                    "status_divida": r["status_divida"],
+                    "inscricao_cci": r["inscricao_imobiliaria"],
+                    "endereco_imovel": r["endereco_imovel"],
+                    "bairro": r["bairro"] or "Plano Diretor",
+                    "cep": r["cep"] or "77000-000",
+                    "tipo_imovel": r["tipo_imovel"] or "RESIDENCIAL",
+                    "valor_venal": float(r["valor_venal"] or 0.0),
+                    "cpf_cnpj_contribuinte": r["cpf_cnpj_contribuinte"],
+                    "nome_contribuinte": r["nome_contribuinte"],
+                    "tipo_pessoa": r["tipo_pessoa"] or "FISICA",
+                    "email_contribuinte": r["email_contribuinte"],
+                    "telefone_contribuinte": r["telefone_contribuinte"],
+                    "tem_processo": bool(r["numero_processo"]),
+                    "numero_processo": r["numero_processo"],
+                    "vara_judicial": r["vara_judicial"],
+                    "status_processo": r["status_processo"],
+                    "data_ajuizamento": r["data_ajuizamento"],
+                })
+            return resultado
+
+    def obter_opcoes_filtros_auditoria(self) -> Dict[str, Any]:
+        """Extrai dinamicamente do banco todas as categorias e valores únicos das colunas para filtros do Auditor."""
+        debitos = self.listar_debitos_completos()
+        anos = sorted({d["exercicio_ano"] for d in debitos} | {2026}, reverse=True)
+        meses = sorted({d["mes_vencimento"] for d in debitos})
+        tributos = sorted({d["tipo_tributo"] for d in debitos if d.get("tipo_tributo")})
+        status_div = sorted({d["status_divida"] for d in debitos if d.get("status_divida")})
+        bairros = sorted({d["bairro"] for d in debitos if d.get("bairro")} | {im.get("bairro", "") for im in self.imoveis.values() if im.get("bairro")})
+        tipos_imovel = sorted({d["tipo_imovel"] for d in debitos if d.get("tipo_imovel")} | {im.get("tipo_imovel", "") for im in self.imoveis.values() if im.get("tipo_imovel")})
+        tipos_pessoa = sorted({c.get("tipo_pessoa", "FISICA") for c in self.contribuintes.values()})
+        status_proc = sorted({d["status_processo"] for d in debitos if d.get("status_processo")})
+        varas = sorted({d["vara_judicial"] for d in debitos if d.get("vara_judicial")})
+
+        return {
+            "exercicios_ano": anos,
+            "meses_vencimento_ativos": meses,
+            "tipos_tributo": tributos,
+            "status_divida": status_div,
+            "bairros": bairros,
+            "tipos_imovel": tipos_imovel,
+            "tipos_pessoa": tipos_pessoa,
+            "status_processo": status_proc,
+            "varas_judiciais": varas,
+            "fontes_coleta": ["dual", "portal_novo", "api_antiga"],
+            "colunas_banco": {
+                "contribuinte": ["id_contribuinte", "cpf_cnpj", "nome", "tipo_pessoa", "email", "telefone", "endereco_correspondencia"],
+                "imovel": ["id_imovel", "inscricao_imobiliaria", "id_contribuinte", "endereco", "bairro", "cep", "tipo_imovel", "valor_venal", "area_terreno"],
+                "divida": ["id_divida", "id_imovel", "exercicio_ano", "valor_original", "valor_atualizado", "tipo_tributo", "status_divida", "data_vencimento"],
+                "processo": ["id_processo", "numero_processo", "id_divida", "vara_judicial", "status_processo", "data_ajuizamento", "observacoes"],
+            },
+        }
