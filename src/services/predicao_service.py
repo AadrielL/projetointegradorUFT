@@ -86,17 +86,40 @@ class ServicoPredicao:
         valor_debito: float,
         dias_atraso: int,
         renda_media_regiao: float = 3000.0,
-        bairro: str = "Centro"
+        bairro: str = "Centro",
+        valor_venal_imovel: float = 0.0,
+        tipo_pessoa: str = "FISICA",
+        tem_processo: bool = False,
     ) -> Dict[str, Any]:
         """Realiza inferência de inadimplência e combina com o score de recuperabilidade."""
-        X_input = [[valor_debito, dias_atraso, renda_media_regiao]]
+        n_features = getattr(self.modelo, "n_features_in_", 3)
+        if n_features == 8:
+            venal = valor_venal_imovel if valor_venal_imovel > 0 else max(valor_debito * 15.0, 180000.0)
+            razao_venal = round((valor_debito / max(venal, 1.0)) * 100.0, 2)
+            comprometimento = round(((valor_debito / 12.0) / max(renda_media_regiao, 1.0)) * 100.0, 2)
+            p_num = 1 if str(tipo_pessoa).upper() == "JURIDICA" else 0
+            proc_num = 1 if tem_processo or dias_atraso > 1200 else 0
+            X_input = [[
+                venal,
+                valor_debito,
+                dias_atraso,
+                renda_media_regiao,
+                razao_venal,
+                comprometimento,
+                p_num,
+                proc_num,
+            ]]
+        else:
+            X_input = [[valor_debito, dias_atraso, renda_media_regiao]]
 
         try:
             prob_pagamento = float(self.modelo.predict_proba(X_input)[0][1])
         except Exception:
-            # Fallback caso predict_proba não esteja disponível
-            pred = self.modelo.predict(X_input)[0]
-            prob_pagamento = 0.85 if pred == 1 else 0.20
+            try:
+                pred = self.modelo.predict(X_input)[0]
+                prob_pagamento = 0.85 if pred == 1 else 0.20
+            except Exception:
+                prob_pagamento = 0.75 if dias_atraso < 500 else 0.35
 
         prob_inadimplencia = round((1.0 - prob_pagamento) * 100, 1)
         prob_pagamento_pct = round(prob_pagamento * 100, 1)
